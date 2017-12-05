@@ -46,11 +46,9 @@ import com.google.api.services.storage.model.BucketAccessControl;
 import com.google.api.services.storage.model.Buckets;
 import com.google.api.services.storage.model.ComposeRequest;
 import com.google.api.services.storage.model.ComposeRequest.SourceObjects.ObjectPreconditions;
-import com.google.api.services.storage.model.Notification;
 import com.google.api.services.storage.model.ObjectAccessControl;
 import com.google.api.services.storage.model.Objects;
 import com.google.api.services.storage.model.Policy;
-import com.google.api.services.storage.model.ServiceAccount;
 import com.google.api.services.storage.model.StorageObject;
 import com.google.api.services.storage.model.TestIamPermissionsResponse;
 import com.google.cloud.BaseServiceException;
@@ -58,6 +56,8 @@ import com.google.cloud.Tuple;
 import com.google.cloud.http.HttpTransportOptions;
 import com.google.cloud.storage.StorageException;
 import com.google.cloud.storage.StorageOptions;
+import com.google.cloud.storage.RestartableInputStream;
+import com.google.cloud.storage.RetryableInputStreamContent;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
@@ -239,6 +239,28 @@ public class HttpStorageRpc implements StorageRpc {
           .setIfGenerationNotMatch(Option.IF_GENERATION_NOT_MATCH.getLong(options))
           .setUserProject(Option.USER_PROJECT.getString(options))
           .execute();
+    } catch (IOException ex) {
+      throw translate(ex);
+    }
+  }
+
+  @Override
+  public StorageObject create(StorageObject storageObject, final RestartableInputStream content,
+                              Map<Option, ?> options) {
+    try {
+      Storage.Objects.Insert insert = storage.objects()
+              .insert(storageObject.getBucket(), storageObject,
+                      new RetryableInputStreamContent(storageObject.getContentType(), content));
+      insert.getMediaHttpUploader().setDirectUploadEnabled(true);
+      setEncryptionHeaders(insert.getRequestHeaders(), ENCRYPTION_KEY_PREFIX, options);
+      return insert.setProjection(DEFAULT_PROJECTION)
+              .setPredefinedAcl(Option.PREDEFINED_ACL.getString(options))
+              .setIfMetagenerationMatch(Option.IF_METAGENERATION_MATCH.getLong(options))
+              .setIfMetagenerationNotMatch(Option.IF_METAGENERATION_NOT_MATCH.getLong(options))
+              .setIfGenerationMatch(Option.IF_GENERATION_MATCH.getLong(options))
+              .setIfGenerationNotMatch(Option.IF_GENERATION_NOT_MATCH.getLong(options))
+              .setUserProject(Option.USER_PROJECT.getString(options))
+              .execute();
     } catch (IOException ex) {
       throw translate(ex);
     }
@@ -896,47 +918,6 @@ public class HttpStorageRpc implements StorageRpc {
     try {
       return storage.buckets().testIamPermissions(bucket, permissions)
           .setUserProject(Option.USER_PROJECT.getString(options)).execute();
-    } catch (IOException ex) {
-      throw translate(ex);
-    }
-  }
-
-  @Override
-  public boolean deleteNotification(String bucket, String notification) {
-    try {
-      storage.notifications().delete(bucket, notification).execute();
-      return true;
-    } catch (IOException ex) {
-      StorageException serviceException = translate(ex);
-      if (serviceException.getCode() == HTTP_NOT_FOUND) {
-        return false;
-      }
-      throw serviceException;
-    }
-  }
-
-  @Override
-  public List<Notification> listNotifications(String bucket) {
-    try {
-      return storage.notifications().list(bucket).execute().getItems();
-    } catch (IOException ex) {
-      throw translate(ex);
-    }
-  }
-
-  @Override
-  public Notification createNotification(String bucket, Notification notification) {
-    try {
-      return storage.notifications().insert(bucket, notification).execute();
-    } catch (IOException ex) {
-      throw translate(ex);
-    }
-  }
-
-  @Override
-  public ServiceAccount getServiceAccount(String projectId) {
-    try {
-      return storage.projects().serviceAccount().get(projectId).execute();
     } catch (IOException ex) {
       throw translate(ex);
     }
